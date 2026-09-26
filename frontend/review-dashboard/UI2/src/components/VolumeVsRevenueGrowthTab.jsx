@@ -55,9 +55,10 @@ const formatNumber = (val, decimals = 2) => {
 };
 
 const formatPct = (val) => {
-  if (val === null || val === undefined || isNaN(val)) return 'N/A';
-  const prefix = val > 0 ? '+' : '';
-  return `${prefix}${Number(val).toFixed(2)}%`;
+  if (val === null || val === undefined || isNaN(Number(val))) return 'N/A';
+  const num = Number(val);
+  const prefix = num > 0 ? '+' : '';
+  return `${prefix}${num.toFixed(2)}%`;
 };
 
 const GlassCard = ({ children, sx = {}, onClick }) => (
@@ -180,24 +181,25 @@ export default function VolumeVsRevenueGrowthTab() {
 
   // Growth Rates Comparison Chart Data
   const growthRatesChartData = useMemo(() => {
+    const isNum = (v) => v !== null && v !== undefined && !isNaN(Number(v));
     return [
       {
         name: 'Volume (Tonnage) Growth',
-        growth: comp.volumeGrowthPct !== null ? comp.volumeGrowthPct : 0,
-        color: comp.volumeGrowthPct >= 0 ? '#38bdf8' : '#f43f5e',
-        hasData: comp.volumeGrowthPct !== null
+        growth: isNum(comp.volumeGrowthPct) ? Number(comp.volumeGrowthPct) : 0,
+        color: (comp.volumeGrowthPct || 0) >= 0 ? '#38bdf8' : '#f43f5e',
+        hasData: isNum(comp.volumeGrowthPct)
       },
       {
         name: 'Revenue Growth',
-        growth: comp.revenueGrowthPct !== null ? comp.revenueGrowthPct : 0,
-        color: comp.revenueGrowthPct >= 0 ? '#10b981' : '#f43f5e',
-        hasData: comp.revenueGrowthPct !== null
+        growth: isNum(comp.revenueGrowthPct) ? Number(comp.revenueGrowthPct) : 0,
+        color: (comp.revenueGrowthPct || 0) >= 0 ? '#10b981' : '#f43f5e',
+        hasData: isNum(comp.revenueGrowthPct)
       },
       {
         name: 'Revenue / MT Growth',
-        growth: comp.revPerMtGrowthPct !== null ? comp.revPerMtGrowthPct : 0,
-        color: comp.revPerMtGrowthPct >= 0 ? '#a855f7' : '#f43f5e',
-        hasData: comp.revPerMtGrowthPct !== null
+        growth: isNum(comp.revPerMtGrowthPct) ? Number(comp.revPerMtGrowthPct) : 0,
+        color: (comp.revPerMtGrowthPct || 0) >= 0 ? '#a855f7' : '#f43f5e',
+        hasData: isNum(comp.revPerMtGrowthPct)
       }
     ];
   }, [comp]);
@@ -494,16 +496,18 @@ export default function VolumeVsRevenueGrowthTab() {
                     <Typography variant="caption" sx={{ color: '#AAB4C0', display: 'block', fontWeight: 600 }}>
                       GROWTH GAP (REVENUE % - VOLUME %)
                     </Typography>
-                    <Typography variant="subtitle1" fontWeight={900} sx={{ color: comp.growthGap > 0 ? '#10b981' : comp.growthGap < 0 ? '#f59e0b' : '#38bdf8' }}>
-                      {comp.growthGap !== null ? `${comp.growthGap > 0 ? '+' : ''}${comp.growthGap.toFixed(2)} pp` : 'N/A'}
+                    <Typography variant="subtitle1" fontWeight={900} sx={{ color: (comp?.growthGap || 0) > 0 ? '#10b981' : (comp?.growthGap || 0) < 0 ? '#f59e0b' : '#38bdf8' }}>
+                      {comp?.growthGap !== null && comp?.growthGap !== undefined && !isNaN(Number(comp?.growthGap))
+                        ? `${Number(comp.growthGap) > 0 ? '+' : ''}${Number(comp.growthGap).toFixed(2)} pp`
+                        : 'N/A'}
                     </Typography>
                   </Box>
                   <Chip
                     size="small"
-                    label={comp.growthGap > 0 ? 'Revenue Outpacing Volume' : comp.growthGap < 0 ? 'Volume Outpacing Revenue' : 'Proportionate'}
+                    label={(comp?.growthGap || 0) > 0 ? 'Revenue Outpacing Volume' : (comp?.growthGap || 0) < 0 ? 'Volume Outpacing Revenue' : 'Proportionate'}
                     sx={{
-                      bgcolor: comp.growthGap > 0 ? 'rgba(16, 185, 129, 0.15)' : comp.growthGap < 0 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(56, 189, 248, 0.15)',
-                      color: comp.growthGap > 0 ? '#10b981' : comp.growthGap < 0 ? '#f59e0b' : '#38bdf8',
+                      bgcolor: (comp?.growthGap || 0) > 0 ? 'rgba(16, 185, 129, 0.15)' : (comp?.growthGap || 0) < 0 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(56, 189, 248, 0.15)',
+                      color: (comp?.growthGap || 0) > 0 ? '#10b981' : (comp?.growthGap || 0) < 0 ? '#f59e0b' : '#38bdf8',
                       fontWeight: 700,
                       fontSize: '0.7rem'
                     }}
@@ -643,7 +647,11 @@ export default function VolumeVsRevenueGrowthTab() {
                           borderRadius: '8px',
                           color: '#FFF'
                         }}
-                        formatter={(val) => [`${val > 0 ? '+' : ''}${val.toFixed(2)}%`, 'Growth Rate']}
+                        formatter={(val) => {
+                          if (val === null || val === undefined || isNaN(Number(val))) return ['N/A', 'Growth Rate'];
+                          const num = Number(val);
+                          return [`${num > 0 ? '+' : ''}${num.toFixed(2)}%`, 'Growth Rate'];
+                        }}
                       />
                       <ReferenceLine x={0} stroke="rgba(255,255,255,0.3)" />
                       <Bar dataKey="growth" radius={[0, 4, 4, 0]}>
