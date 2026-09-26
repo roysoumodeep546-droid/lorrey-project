@@ -30,10 +30,12 @@ const MONTHS = [
 ];
 
 const FY_OPTIONS = [
-  "FY 2024-25",
-  "FY 2025-26",
   "FY 2026-27",
-  "FY 2027-28"
+  "FY 2025-26",
+  "FY 2024-25",
+  "FY 2023-24",
+  "FY 2022-23",
+  "FY 2021-22"
 ];
 
 const formatCurrency = (val) => {
@@ -47,7 +49,7 @@ const formatCurrency = (val) => {
 };
 
 const formatNumber = (val, decimals = 2) => {
-  if (val === null || val === undefined || isNaN(val)) return '0';
+  if (val === null || val === undefined || isNaN(val)) return '0.00';
   return Number(val).toLocaleString('en-IN', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals
@@ -82,18 +84,40 @@ export default function VolumeVsRevenueGrowthTab() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Filters State
+  // Dynamic Today Date (YYYY-MM-DD)
+  const todayIso = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }, []);
+
+  // Comparison Parameters State
   const [tyFY, setTyFY] = useState('FY 2026-27');
   const [pyFY, setPyFY] = useState('FY 2025-26');
-  const [periodType, setPeriodType] = useState('FULL_FY'); // 'FULL_FY' | 'MONTH' | 'DATE'
-  const [selectedMonth, setSelectedMonth] = useState('September');
-  const [tyDate, setTyDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [periodType, setPeriodType] = useState('MONTH'); // 'FULL_FY' | 'MONTH' | 'DATE'
+  
+  // Independent Month Selectors
+  const [tyMonth, setTyMonth] = useState('September');
+  const [pyMonth, setPyMonth] = useState('August');
+
+  // Independent Date Selectors
+  const [tyDate, setTyDate] = useState(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  });
   const [pyDate, setPyDate] = useState(() => {
     const d = new Date();
     d.setFullYear(d.getFullYear() - 1);
-    return d.toISOString().split('T')[0];
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   });
-  const [site, setSite] = useState('ALL'); // 'ALL' | 'NVL' | 'NVCL'
 
   // Data Response
   const [data, setData] = useState(null);
@@ -108,10 +132,10 @@ export default function VolumeVsRevenueGrowthTab() {
           tyFY,
           pyFY,
           periodType,
-          month: selectedMonth,
+          tyMonth,
+          pyMonth,
           tyDate,
-          pyDate,
-          site
+          pyDate
         },
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
@@ -127,7 +151,7 @@ export default function VolumeVsRevenueGrowthTab() {
     } finally {
       setLoading(false);
     }
-  }, [tyFY, pyFY, periodType, selectedMonth, tyDate, pyDate, site]);
+  }, [tyFY, pyFY, periodType, tyMonth, pyMonth, tyDate, pyDate]);
 
   useEffect(() => {
     fetchGrowthData();
@@ -155,29 +179,32 @@ export default function VolumeVsRevenueGrowthTab() {
   const py = data?.py || {};
   const comp = data?.comparison || {};
 
+  const pyLabel = py.headerLabel || pyFY;
+  const tyLabel = ty.headerLabel || tyFY;
+
   // Volume & Revenue Comparison Chart Data
   const volumeRevenueChartData = useMemo(() => {
     return [
       {
         metric: 'Tonnage (MT)',
-        [pyFY]: py.tonnage || 0,
-        [tyFY]: ty.tonnage || 0,
+        [pyLabel]: py.tonnage || 0,
+        [tyLabel]: ty.tonnage || 0,
         unit: 'MT'
       },
       {
         metric: 'Revenue (₹ in Lakhs)',
-        [pyFY]: Math.round(((py.revenue || 0) / 100000) * 100) / 100,
-        [tyFY]: Math.round(((ty.revenue || 0) / 100000) * 100) / 100,
+        [pyLabel]: Math.round(((py.revenue || 0) / 100000) * 100) / 100,
+        [tyLabel]: Math.round(((ty.revenue || 0) / 100000) * 100) / 100,
         unit: 'Lakhs'
       },
       {
         metric: 'Revenue / MT (₹)',
-        [pyFY]: py.revPerMt || 0,
-        [tyFY]: ty.revPerMt || 0,
+        [pyLabel]: py.revPerMt || 0,
+        [tyLabel]: ty.revPerMt || 0,
         unit: '₹/MT'
       }
     ];
-  }, [ty, py, tyFY, pyFY]);
+  }, [ty, py, tyLabel, pyLabel]);
 
   // Growth Rates Comparison Chart Data
   const growthRatesChartData = useMemo(() => {
@@ -219,7 +246,7 @@ export default function VolumeVsRevenueGrowthTab() {
   return (
     <Box sx={{ width: '100%', pb: 6 }}>
       
-      {/* ── TOP FILTER CONTROL PANEL ────────────────────────────────────────── */}
+      {/* ── TOP FILTER CONTROL PANEL (NO SITE FILTER) ─────────────────────── */}
       <GlassCard sx={{ p: 2.5, mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2, flexWrap: 'wrap', gap: 1.5 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -229,7 +256,7 @@ export default function VolumeVsRevenueGrowthTab() {
             </Typography>
             <Chip
               size="small"
-              label="Authoritative Data: Cement Register (Tonnage) + Bill Register (Revenue)"
+              label="Full Project Scope: Cement Register (Tonnage) + Bill Register (Revenue)"
               sx={{ bgcolor: 'rgba(139, 92, 246, 0.15)', color: '#c084fc', fontSize: '0.7rem', fontWeight: 600, border: '1px solid rgba(139, 92, 246, 0.3)' }}
             />
           </Box>
@@ -253,7 +280,7 @@ export default function VolumeVsRevenueGrowthTab() {
 
         <Grid container spacing={2} alignItems="center">
           {/* Target Year (TY) Selector */}
-          <Grid item xs={12} sm={6} md={2.4}>
+          <Grid item xs={12} sm={6} md={periodType === 'FULL_FY' ? 4 : 2.4}>
             <Typography variant="caption" sx={{ color: '#AAB4C0', mb: 0.5, display: 'block', fontWeight: 600 }}>
               TARGET / CURRENT FY (TY)
             </Typography>
@@ -270,7 +297,7 @@ export default function VolumeVsRevenueGrowthTab() {
           </Grid>
 
           {/* Comparison / Previous FY (PY) Selector */}
-          <Grid item xs={12} sm={6} md={2.4}>
+          <Grid item xs={12} sm={6} md={periodType === 'FULL_FY' ? 4 : 2.4}>
             <Typography variant="caption" sx={{ color: '#AAB4C0', mb: 0.5, display: 'block', fontWeight: 600 }}>
               COMPARISON / PREVIOUS FY (PY)
             </Typography>
@@ -287,7 +314,7 @@ export default function VolumeVsRevenueGrowthTab() {
           </Grid>
 
           {/* Period Type Selector */}
-          <Grid item xs={12} sm={6} md={2.4}>
+          <Grid item xs={12} sm={6} md={periodType === 'FULL_FY' ? 4 : 2.4}>
             <Typography variant="caption" sx={{ color: '#AAB4C0', mb: 0.5, display: 'block', fontWeight: 600 }}>
               PERIOD COMPARISON TYPE
             </Typography>
@@ -297,42 +324,61 @@ export default function VolumeVsRevenueGrowthTab() {
               onChange={(e) => setPeriodType(e.target.value)}
               sx={selectStyle}
             >
-              <MenuItem value="FULL_FY">ALL / FULL FY</MenuItem>
+              <MenuItem value="FULL_FY">FULL FY</MenuItem>
               <MenuItem value="MONTH">SPECIFIC MONTH</MenuItem>
               <MenuItem value="DATE">SPECIFIC DATE</MenuItem>
             </Select>
           </Grid>
 
-          {/* Month Selector (Conditional) */}
+          {/* Independent Month Selectors (When SPECIFIC MONTH) */}
           {periodType === 'MONTH' && (
-            <Grid item xs={12} sm={6} md={2.4}>
-              <Typography variant="caption" sx={{ color: '#AAB4C0', mb: 0.5, display: 'block', fontWeight: 600 }}>
-                SELECT MONTH
-              </Typography>
-              <Select
-                fullWidth
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                sx={selectStyle}
-              >
-                {MONTHS.map(m => (
-                  <MenuItem key={m} value={m}>{m}</MenuItem>
-                ))}
-              </Select>
-            </Grid>
+            <>
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Typography variant="caption" sx={{ color: '#38bdf8', mb: 0.5, display: 'block', fontWeight: 700 }}>
+                  CURRENT FY MONTH
+                </Typography>
+                <Select
+                  fullWidth
+                  value={tyMonth}
+                  onChange={(e) => setTyMonth(e.target.value)}
+                  sx={selectStyle}
+                >
+                  {MONTHS.map(m => (
+                    <MenuItem key={`ty-m-${m}`} value={m}>{m}</MenuItem>
+                  ))}
+                </Select>
+              </Grid>
+
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Typography variant="caption" sx={{ color: '#94a3b8', mb: 0.5, display: 'block', fontWeight: 700 }}>
+                  PREVIOUS FY MONTH
+                </Typography>
+                <Select
+                  fullWidth
+                  value={pyMonth}
+                  onChange={(e) => setPyMonth(e.target.value)}
+                  sx={selectStyle}
+                >
+                  {MONTHS.map(m => (
+                    <MenuItem key={`py-m-${m}`} value={m}>{m}</MenuItem>
+                  ))}
+                </Select>
+              </Grid>
+            </>
           )}
 
-          {/* Date Pickers (Conditional) */}
+          {/* Independent Date Pickers (When SPECIFIC DATE) */}
           {periodType === 'DATE' && (
             <>
               <Grid item xs={12} sm={6} md={2.4}>
-                <Typography variant="caption" sx={{ color: '#AAB4C0', mb: 0.5, display: 'block', fontWeight: 600 }}>
-                  TY DATE
+                <Typography variant="caption" sx={{ color: '#38bdf8', mb: 0.5, display: 'block', fontWeight: 700 }}>
+                  CURRENT FY DATE
                 </Typography>
                 <TextField
                   fullWidth
                   type="date"
                   value={tyDate}
+                  inputProps={{ max: todayIso }}
                   onChange={(e) => setTyDate(e.target.value)}
                   sx={{
                     '& .MuiInputBase-root': { color: '#FFF', bgcolor: 'rgba(255,255,255,0.05)', borderRadius: '8px', fontSize: '0.85rem' },
@@ -342,8 +388,8 @@ export default function VolumeVsRevenueGrowthTab() {
                 />
               </Grid>
               <Grid item xs={12} sm={6} md={2.4}>
-                <Typography variant="caption" sx={{ color: '#AAB4C0', mb: 0.5, display: 'block', fontWeight: 600 }}>
-                  PY DATE
+                <Typography variant="caption" sx={{ color: '#94a3b8', mb: 0.5, display: 'block', fontWeight: 700 }}>
+                  PREVIOUS FY DATE
                 </Typography>
                 <TextField
                   fullWidth
@@ -359,25 +405,28 @@ export default function VolumeVsRevenueGrowthTab() {
               </Grid>
             </>
           )}
-
-          {/* Site Filter */}
-          <Grid item xs={12} sm={6} md={periodType === 'DATE' ? 12 : 2.4}>
-            <Typography variant="caption" sx={{ color: '#AAB4C0', mb: 0.5, display: 'block', fontWeight: 600 }}>
-              SITE FILTER
-            </Typography>
-            <Select
-              fullWidth
-              value={site}
-              onChange={(e) => setSite(e.target.value)}
-              sx={selectStyle}
-            >
-              <MenuItem value="ALL">ALL SITES (NVL + NVCL)</MenuItem>
-              <MenuItem value="NVL">NVL ONLY</MenuItem>
-              <MenuItem value="NVCL">NVCL ONLY</MenuItem>
-            </Select>
-          </Grid>
         </Grid>
       </GlassCard>
+
+      {/* ── COMPARISON HEADING ──────────────────────────────────────────────── */}
+      {data?.comparisonHeading && (
+        <Box sx={{ textAlign: 'center', mb: 3 }}>
+          <Chip
+            label={data.comparisonHeading}
+            sx={{
+              bgcolor: 'rgba(139, 92, 246, 0.12)',
+              color: '#c084fc',
+              fontSize: '1rem',
+              fontWeight: 800,
+              py: 2.2,
+              px: 2,
+              borderRadius: '12px',
+              border: '1px solid rgba(139, 92, 246, 0.3)',
+              letterSpacing: '1px'
+            }}
+          />
+        </Box>
+      )}
 
       {error && (
         <Alert severity="error" sx={{ mb: 3, bgcolor: 'rgba(244,63,94,0.15)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.3)' }}>
@@ -389,7 +438,7 @@ export default function VolumeVsRevenueGrowthTab() {
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '45vh', gap: 2 }}>
           <CircularProgress sx={{ color: '#8b5cf6' }} />
           <Typography variant="body2" sx={{ color: '#AAB4C0' }}>
-            Aggregating Cement Register Tonnage and Bill Register Revenue...
+            Aggregating Full Project Cement Register Tonnage and Bill Register Revenue...
           </Typography>
         </Box>
       ) : (
@@ -397,16 +446,16 @@ export default function VolumeVsRevenueGrowthTab() {
           {/* ── TWO-SIDE COMPARISON CARDS & GROWTH SUMMARY ────────────────────── */}
           <Grid container spacing={3} sx={{ mb: 3 }}>
             
-            {/* LEFT CARD: TARGET YEAR (TY) */}
+            {/* LEFT CARD: TARGET / CURRENT PERIOD */}
             <Grid item xs={12} md={4}>
               <GlassCard sx={{ p: 2.5, height: '100%', borderTop: '3px solid #38bdf8' }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
                   <Box>
                     <Typography variant="caption" sx={{ color: '#38bdf8', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      TARGET YEAR (TY)
+                      TARGET / CURRENT PERIOD
                     </Typography>
                     <Typography variant="h6" fontWeight={800} sx={{ color: '#FFF' }}>
-                      {ty.financialYear || tyFY}
+                      {ty.headerLabel || ty.financialYear || tyFY}
                     </Typography>
                   </Box>
                   <Chip size="small" label={ty.periodDisplay || '-'} sx={{ bgcolor: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', fontWeight: 600, fontSize: '0.7rem' }} />
@@ -419,8 +468,8 @@ export default function VolumeVsRevenueGrowthTab() {
                     <Typography variant="h6" fontWeight={800} sx={{ color: '#38bdf8' }}>
                       {formatNumber(ty.tonnage)} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#AAB4C0' }}>MT</span>
                     </Typography>
-                    <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>
-                      NVL: {formatNumber(ty.nvlTonnage)} | NVCL: {formatNumber(ty.nvclTonnage)}
+                    <Typography variant="caption" sx={{ color: '#64748b', fontSize: '0.7rem' }}>
+                      Full Project (Cement Register)
                     </Typography>
                   </Grid>
 
@@ -429,8 +478,8 @@ export default function VolumeVsRevenueGrowthTab() {
                     <Typography variant="h6" fontWeight={800} sx={{ color: '#10b981' }}>
                       {formatCurrency(ty.revenue)}
                     </Typography>
-                    <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>
-                      NVL: {formatCurrency(ty.nvlRevenue)} | NVCL: {formatCurrency(ty.nvclRevenue)}
+                    <Typography variant="caption" sx={{ color: '#64748b', fontSize: '0.7rem' }}>
+                      Full Project (Bill Register)
                     </Typography>
                   </Grid>
 
@@ -439,7 +488,7 @@ export default function VolumeVsRevenueGrowthTab() {
                       <Box>
                         <Typography variant="caption" sx={{ color: '#AAB4C0', display: 'block' }}>REVENUE PER MT</Typography>
                         <Typography variant="subtitle1" fontWeight={800} sx={{ color: '#c084fc' }}>
-                          ₹{formatNumber(ty.revPerMt)} <span style={{ fontSize: '0.7rem', fontWeight: 500, color: '#AAB4C0' }}>/ MT</span>
+                          {ty.tonnage > 0 ? `₹${formatNumber(ty.revPerMt)}` : 'N/A'} <span style={{ fontSize: '0.7rem', fontWeight: 500, color: '#AAB4C0' }}>{ty.tonnage > 0 ? '/ MT' : ''}</span>
                         </Typography>
                       </Box>
                       <Box sx={{ textAlign: 'right' }}>
@@ -516,16 +565,16 @@ export default function VolumeVsRevenueGrowthTab() {
               </GlassCard>
             </Grid>
 
-            {/* RIGHT CARD: COMPARISON / PREVIOUS YEAR (PY) */}
+            {/* RIGHT CARD: COMPARISON / PREVIOUS PERIOD */}
             <Grid item xs={12} md={4}>
               <GlassCard sx={{ p: 2.5, height: '100%', borderTop: '3px solid #94a3b8' }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
                   <Box>
                     <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      COMPARISON YEAR (PY)
+                      COMPARISON / PREVIOUS PERIOD
                     </Typography>
                     <Typography variant="h6" fontWeight={800} sx={{ color: '#FFF' }}>
-                      {py.financialYear || pyFY}
+                      {py.headerLabel || py.financialYear || pyFY}
                     </Typography>
                   </Box>
                   <Chip size="small" label={py.periodDisplay || '-'} sx={{ bgcolor: 'rgba(148, 163, 184, 0.15)', color: '#94a3b8', fontWeight: 600, fontSize: '0.7rem' }} />
@@ -538,8 +587,8 @@ export default function VolumeVsRevenueGrowthTab() {
                     <Typography variant="h6" fontWeight={800} sx={{ color: '#94a3b8' }}>
                       {formatNumber(py.tonnage)} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#AAB4C0' }}>MT</span>
                     </Typography>
-                    <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>
-                      NVL: {formatNumber(py.nvlTonnage)} | NVCL: {formatNumber(py.nvclTonnage)}
+                    <Typography variant="caption" sx={{ color: '#64748b', fontSize: '0.7rem' }}>
+                      Full Project (Cement Register)
                     </Typography>
                   </Grid>
 
@@ -548,8 +597,8 @@ export default function VolumeVsRevenueGrowthTab() {
                     <Typography variant="h6" fontWeight={800} sx={{ color: '#10b981' }}>
                       {formatCurrency(py.revenue)}
                     </Typography>
-                    <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>
-                      NVL: {formatCurrency(py.nvlRevenue)} | NVCL: {formatCurrency(py.nvclRevenue)}
+                    <Typography variant="caption" sx={{ color: '#64748b', fontSize: '0.7rem' }}>
+                      Full Project (Bill Register)
                     </Typography>
                   </Grid>
 
@@ -558,7 +607,7 @@ export default function VolumeVsRevenueGrowthTab() {
                       <Box>
                         <Typography variant="caption" sx={{ color: '#AAB4C0', display: 'block' }}>REVENUE PER MT</Typography>
                         <Typography variant="subtitle1" fontWeight={800} sx={{ color: '#c084fc' }}>
-                          ₹{formatNumber(py.revPerMt)} <span style={{ fontSize: '0.7rem', fontWeight: 500, color: '#AAB4C0' }}>/ MT</span>
+                          {py.tonnage > 0 ? `₹${formatNumber(py.revPerMt)}` : 'N/A'} <span style={{ fontSize: '0.7rem', fontWeight: 500, color: '#AAB4C0' }}>{py.tonnage > 0 ? '/ MT' : ''}</span>
                         </Typography>
                       </Box>
                       <Box sx={{ textAlign: 'right' }}>
@@ -584,7 +633,7 @@ export default function VolumeVsRevenueGrowthTab() {
                   Comparative Volume & Revenue Bar Graph
                 </Typography>
                 <Typography variant="caption" sx={{ color: '#AAB4C0', mb: 2, display: 'block' }}>
-                  Side-by-side grouped bars comparing {pyFY} vs {tyFY} across Tonnage, Revenue, and Realization
+                  Side-by-side grouped bars comparing {pyLabel} vs {tyLabel} across Tonnage, Revenue, and Realization
                 </Typography>
 
                 <Box sx={{ width: '100%', height: 320 }}>
@@ -612,8 +661,8 @@ export default function VolumeVsRevenueGrowthTab() {
                         }}
                       />
                       <Legend wrapperStyle={{ color: '#AAB4C0', fontSize: '12px' }} />
-                      <Bar dataKey={pyFY} fill="#64748b" radius={[4, 4, 0, 0]} name={`${pyFY} (Previous)`} />
-                      <Bar dataKey={tyFY} fill="#8b5cf6" radius={[4, 4, 0, 0]} name={`${tyFY} (Target)`} />
+                      <Bar dataKey={pyLabel} fill="#64748b" radius={[4, 4, 0, 0]} name={`${pyLabel} (Previous)`} />
+                      <Bar dataKey={tyLabel} fill="#8b5cf6" radius={[4, 4, 0, 0]} name={`${tyLabel} (Target)`} />
                     </BarChart>
                   </ResponsiveContainer>
                 </Box>
@@ -627,7 +676,7 @@ export default function VolumeVsRevenueGrowthTab() {
                   Growth Variance & Disproportion Bar Graph
                 </Typography>
                 <Typography variant="caption" sx={{ color: '#AAB4C0', mb: 2, display: 'block' }}>
-                  Relative percentage growth metrics between {pyFY} and {tyFY}
+                  Relative percentage growth metrics between {pyLabel} and {tyLabel}
                 </Typography>
 
                 <Box sx={{ width: '100%', height: 320 }}>
@@ -678,6 +727,56 @@ export default function VolumeVsRevenueGrowthTab() {
               Mathematical variance analysis explaining the difference between physical lifting volume growth and financial billed revenue growth based on authoritative project records:
             </Typography>
 
+            {/* Quantitative Realization Diagnostics Box */}
+            <Grid container spacing={2} sx={{ mb: 2 }}>
+              <Grid item xs={12} sm={6} md={3}>
+                <Box sx={{ p: 1.5, borderRadius: '8px', bgcolor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', fontWeight: 600 }}>
+                    PREVIOUS REVENUE / MT
+                  </Typography>
+                  <Typography variant="subtitle1" fontWeight={800} sx={{ color: '#94a3b8' }}>
+                    {py.tonnage > 0 ? `₹${formatNumber(py.revPerMt)} / MT` : 'N/A'}
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: '#64748b', fontSize: '0.7rem' }}>{pyLabel}</Typography>
+                </Box>
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <Box sx={{ p: 1.5, borderRadius: '8px', bgcolor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <Typography variant="caption" sx={{ color: '#38bdf8', display: 'block', fontWeight: 600 }}>
+                    CURRENT REVENUE / MT
+                  </Typography>
+                  <Typography variant="subtitle1" fontWeight={800} sx={{ color: '#38bdf8' }}>
+                    {ty.tonnage > 0 ? `₹${formatNumber(ty.revPerMt)} / MT` : 'N/A'}
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: '#64748b', fontSize: '0.7rem' }}>{tyLabel}</Typography>
+                </Box>
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <Box sx={{ p: 1.5, borderRadius: '8px', bgcolor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <Typography variant="caption" sx={{ color: '#c084fc', display: 'block', fontWeight: 600 }}>
+                    CHANGE IN REVENUE / MT
+                  </Typography>
+                  <Typography variant="subtitle1" fontWeight={800} sx={{ color: (comp?.diffRevPerMt || 0) >= 0 ? '#10b981' : '#f43f5e' }}>
+                    {comp?.diffRevPerMt !== undefined && py.tonnage > 0 && ty.tonnage > 0
+                      ? `${Number(comp.diffRevPerMt) >= 0 ? '+' : ''}₹${formatNumber(comp.diffRevPerMt)} / MT`
+                      : 'N/A'}
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: '#64748b', fontSize: '0.7rem' }}>Absolute Realization Delta</Typography>
+                </Box>
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <Box sx={{ p: 1.5, borderRadius: '8px', bgcolor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <Typography variant="caption" sx={{ color: '#10b981', display: 'block', fontWeight: 600 }}>
+                    REVENUE / MT GROWTH %
+                  </Typography>
+                  <Typography variant="subtitle1" fontWeight={800} sx={{ color: (comp?.revPerMtGrowthPct || 0) >= 0 ? '#10b981' : '#f43f5e' }}>
+                    {formatPct(comp.revPerMtGrowthPct)}
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: '#64748b', fontSize: '0.7rem' }}>Percentage Realization Change</Typography>
+                </Box>
+              </Grid>
+            </Grid>
+
             <Stack spacing={1.5}>
               {(comp.disproportionReasons || []).map((reason, idx) => (
                 <Box
@@ -716,7 +815,7 @@ export default function VolumeVsRevenueGrowthTab() {
               Consolidated Period Financial & Operational Summary
             </Typography>
             <Typography variant="caption" sx={{ color: '#AAB4C0', mb: 2, display: 'block' }}>
-              Full breakdown across physical volume, financial revenue, and site contributions
+              Full project analysis across physical volume (Cement Register) and financial revenue (Bill Register)
             </Typography>
 
             <TableContainer sx={{ borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -724,8 +823,8 @@ export default function VolumeVsRevenueGrowthTab() {
                 <TableHead>
                   <TableRow sx={{ bgcolor: 'rgba(255,255,255,0.04)' }}>
                     <TableCell sx={{ color: '#AAB4C0', fontWeight: 700, fontSize: '0.75rem', py: 1.2 }}>METRIC / DIMENSION</TableCell>
-                    <TableCell align="right" sx={{ color: '#94a3b8', fontWeight: 700, fontSize: '0.75rem', py: 1.2 }}>{pyFY} (PREVIOUS)</TableCell>
-                    <TableCell align="right" sx={{ color: '#38bdf8', fontWeight: 700, fontSize: '0.75rem', py: 1.2 }}>{tyFY} (TARGET)</TableCell>
+                    <TableCell align="right" sx={{ color: '#94a3b8', fontWeight: 700, fontSize: '0.75rem', py: 1.2 }}>{pyLabel} (PREVIOUS)</TableCell>
+                    <TableCell align="right" sx={{ color: '#38bdf8', fontWeight: 700, fontSize: '0.75rem', py: 1.2 }}>{tyLabel} (TARGET)</TableCell>
                     <TableCell align="right" sx={{ color: '#FFF', fontWeight: 700, fontSize: '0.75rem', py: 1.2 }}>ABSOLUTE VARIANCE</TableCell>
                     <TableCell align="right" sx={{ color: '#10b981', fontWeight: 700, fontSize: '0.75rem', py: 1.2 }}>GROWTH %</TableCell>
                   </TableRow>
@@ -760,43 +859,23 @@ export default function VolumeVsRevenueGrowthTab() {
                   {/* Average Revenue Per MT */}
                   <TableRow hover sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.03)' } }}>
                     <TableCell sx={{ color: '#FFF', fontWeight: 600, fontSize: '0.8rem' }}>Average Revenue / MT Realization</TableCell>
-                    <TableCell align="right" sx={{ color: '#94a3b8', fontWeight: 600 }}>₹{formatNumber(py.revPerMt)} / MT</TableCell>
-                    <TableCell align="right" sx={{ color: '#c084fc', fontWeight: 700 }}>₹{formatNumber(ty.revPerMt)} / MT</TableCell>
+                    <TableCell align="right" sx={{ color: '#94a3b8', fontWeight: 600 }}>
+                      {py.tonnage > 0 ? `₹${formatNumber(py.revPerMt)} / MT` : 'N/A'}
+                    </TableCell>
+                    <TableCell align="right" sx={{ color: '#c084fc', fontWeight: 700 }}>
+                      {ty.tonnage > 0 ? `₹${formatNumber(ty.revPerMt)} / MT` : 'N/A'}
+                    </TableCell>
                     <TableCell align="right" sx={{ color: (ty.revPerMt - py.revPerMt) >= 0 ? '#c084fc' : '#f43f5e', fontWeight: 600 }}>
-                      {(ty.revPerMt - py.revPerMt) >= 0 ? '+' : ''}₹{formatNumber(ty.revPerMt - py.revPerMt)} / MT
+                      {py.tonnage > 0 && ty.tonnage > 0
+                        ? `${(ty.revPerMt - py.revPerMt) >= 0 ? '+' : ''}₹${formatNumber(ty.revPerMt - py.revPerMt)} / MT`
+                        : 'N/A'}
                     </TableCell>
                     <TableCell align="right" sx={{ color: comp.revPerMtGrowthPct >= 0 ? '#c084fc' : '#f43f5e', fontWeight: 800 }}>
                       {formatPct(comp.revPerMtGrowthPct)}
                     </TableCell>
                   </TableRow>
 
-                  {/* NVL Breakdown */}
-                  <TableRow hover sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.03)' }, bgcolor: 'rgba(255,255,255,0.01)' }}>
-                    <TableCell sx={{ color: '#cbd5e1', fontSize: '0.75rem', pl: 3 }}>└ NVL Tonnage & Revenue</TableCell>
-                    <TableCell align="right" sx={{ color: '#94a3b8', fontSize: '0.75rem' }}>{formatNumber(py.nvlTonnage)} MT • {formatCurrency(py.nvlRevenue)}</TableCell>
-                    <TableCell align="right" sx={{ color: '#cbd5e1', fontSize: '0.75rem' }}>{formatNumber(ty.nvlTonnage)} MT • {formatCurrency(ty.nvlRevenue)}</TableCell>
-                    <TableCell align="right" sx={{ color: '#cbd5e1', fontSize: '0.75rem' }}>
-                      {formatNumber(ty.nvlTonnage - py.nvlTonnage)} MT • {formatCurrency(ty.nvlRevenue - py.nvlRevenue)}
-                    </TableCell>
-                    <TableCell align="right" sx={{ color: '#cbd5e1', fontSize: '0.75rem', fontWeight: 700 }}>
-                      {py.nvlTonnage > 0 ? formatPct(((ty.nvlTonnage - py.nvlTonnage) / py.nvlTonnage) * 100) : 'N/A'} (Vol)
-                    </TableCell>
-                  </TableRow>
-
-                  {/* NVCL Breakdown */}
-                  <TableRow hover sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.03)' }, bgcolor: 'rgba(255,255,255,0.01)' }}>
-                    <TableCell sx={{ color: '#cbd5e1', fontSize: '0.75rem', pl: 3 }}>└ NVCL Tonnage & Revenue</TableCell>
-                    <TableCell align="right" sx={{ color: '#94a3b8', fontSize: '0.75rem' }}>{formatNumber(py.nvclTonnage)} MT • {formatCurrency(py.nvclRevenue)}</TableCell>
-                    <TableCell align="right" sx={{ color: '#cbd5e1', fontSize: '0.75rem' }}>{formatNumber(ty.nvclTonnage)} MT • {formatCurrency(ty.nvclRevenue)}</TableCell>
-                    <TableCell align="right" sx={{ color: '#cbd5e1', fontSize: '0.75rem' }}>
-                      {formatNumber(ty.nvclTonnage - py.nvclTonnage)} MT • {formatCurrency(ty.nvclRevenue - py.nvclRevenue)}
-                    </TableCell>
-                    <TableCell align="right" sx={{ color: '#cbd5e1', fontSize: '0.75rem', fontWeight: 700 }}>
-                      {py.nvclTonnage > 0 ? formatPct(((ty.nvclTonnage - py.nvclTonnage) / py.nvclTonnage) * 100) : 'N/A'} (Vol)
-                    </TableCell>
-                  </TableRow>
-
-                  {/* Operations Dispatches */}
+                  {/* Operations Dispatches / Trips */}
                   <TableRow hover sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.03)' } }}>
                     <TableCell sx={{ color: '#AAB4C0', fontSize: '0.8rem' }}>Total Cement Register Trips / Dispatches</TableCell>
                     <TableCell align="right" sx={{ color: '#94a3b8' }}>{py.tripCount || 0} Trips</TableCell>
@@ -804,6 +883,17 @@ export default function VolumeVsRevenueGrowthTab() {
                     <TableCell align="right" sx={{ color: '#FFF' }}>{(ty.tripCount || 0) - (py.tripCount || 0)} Trips</TableCell>
                     <TableCell align="right" sx={{ color: '#FFF', fontWeight: 700 }}>
                       {py.tripCount > 0 ? formatPct((((ty.tripCount || 0) - (py.tripCount || 0)) / py.tripCount) * 100) : 'N/A'}
+                    </TableCell>
+                  </TableRow>
+
+                  {/* Total Bills */}
+                  <TableRow hover sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.03)' } }}>
+                    <TableCell sx={{ color: '#AAB4C0', fontSize: '0.8rem' }}>Total Generated Bills</TableCell>
+                    <TableCell align="right" sx={{ color: '#94a3b8' }}>{py.billCount || 0} Bills</TableCell>
+                    <TableCell align="right" sx={{ color: '#38bdf8' }}>{ty.billCount || 0} Bills</TableCell>
+                    <TableCell align="right" sx={{ color: '#FFF' }}>{(ty.billCount || 0) - (py.billCount || 0)} Bills</TableCell>
+                    <TableCell align="right" sx={{ color: '#FFF', fontWeight: 700 }}>
+                      {py.billCount > 0 ? formatPct((((ty.billCount || 0) - (py.billCount || 0)) / py.billCount) * 100) : 'N/A'}
                     </TableCell>
                   </TableRow>
                 </TableBody>

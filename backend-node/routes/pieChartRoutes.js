@@ -16,9 +16,16 @@ const getBillRegisterCol = () => mongoose.connection.useDb("cement_register").co
 const getMainCashCol = () => mongoose.connection.useDb("main_cashbook").collection("entries");
 const getPumpPaymentCol = () => mongoose.connection.useDb("pump_payment_register").collection("records");
 
-// Parse any date string into YYYY-MM-DD
+// Parse any date string or Date object into YYYY-MM-DD
 function parseToYYYYMMDD(dStr) {
   if (!dStr) return null;
+  if (dStr instanceof Date) {
+    if (isNaN(dStr.getTime())) return null;
+    const y = dStr.getFullYear();
+    const m = String(dStr.getMonth() + 1).padStart(2, '0');
+    const d = String(dStr.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
   const clean = String(dStr).trim();
   const parts = clean.split(/[-\/\.]/);
   if (parts.length === 3) {
@@ -46,15 +53,22 @@ function parseToYYYYMMDD(dStr) {
 }
 
 function parseFY(fyStr) {
-  if (!fyStr || !fyStr.includes('-')) {
+  if (!fyStr) {
     const now = new Date();
     const m = now.getMonth();
     const y = now.getFullYear();
     const startYear = m >= 3 ? y : y - 1;
     return { startYear, endYear: startYear + 1 };
   }
-  const parts = fyStr.split('-');
-  const startYear = parseInt(parts[0], 10);
+  const m = String(fyStr).match(/(\d{4})/);
+  if (m) {
+    const startYear = parseInt(m[1], 10);
+    return { startYear, endYear: startYear + 1 };
+  }
+  const now = new Date();
+  const month = now.getMonth();
+  const y = now.getFullYear();
+  const startYear = month >= 3 ? y : y - 1;
   return { startYear, endYear: startYear + 1 };
 }
 
@@ -372,27 +386,35 @@ function resolvePeriodRange(fyStr, periodType, monthStr, customDate, isTargetYea
   if (periodType === 'DATE') {
     const raw = customDate ? parseToYYYYMMDD(customDate) : todayStr;
     const resolved = (isTargetYear && raw > todayStr) ? todayStr : (raw || todayStr);
-    return { start: resolved, end: resolved, display: moment(resolved).format('DD-MM-YYYY') };
+    return {
+      start: resolved,
+      end: resolved,
+      display: moment(resolved, 'YYYY-MM-DD').format('DD-MM-YYYY'),
+      headerLabel: moment(resolved, 'YYYY-MM-DD').format('DD-MM-YYYY')
+    };
   }
 
   if (periodType === 'MONTH') {
     const mIdx = MONTHS.indexOf(monthStr);
     const targetMonthIdx = mIdx >= 0 ? mIdx : currentMonthIdx;
+    // In FY (Apr-Mar), Months 3..11 (Apr-Dec) are in startYear; Months 0..2 (Jan-Mar) are in endYear
     const targetCalYear = targetMonthIdx >= 3 ? startYear : endYear;
     const mPadded = String(targetMonthIdx + 1).padStart(2, '0');
     const start = `${targetCalYear}-${mPadded}-01`;
-    const lastDay = moment(start).endOf('month').format('YYYY-MM-DD');
+    const lastDay = moment(start, 'YYYY-MM-DD').endOf('month').format('YYYY-MM-DD');
     let end = lastDay;
 
-    // If TY and current calendar month/year, cap at today so future dates are not included
+    // If TY and current calendar month & year, cap at today so future dates are not included
     if (isTargetYear && targetCalYear === currentCalYear && targetMonthIdx === currentMonthIdx) {
       if (todayStr < lastDay) end = todayStr;
     }
 
+    const monthName = MONTHS[targetMonthIdx] || monthStr;
     return {
       start,
       end,
-      display: `${moment(start).format('DD-MM-YYYY')} to ${moment(end).format('DD-MM-YYYY')}`
+      display: `${moment(start, 'YYYY-MM-DD').format('DD-MM-YYYY')} to ${moment(end, 'YYYY-MM-DD').format('DD-MM-YYYY')}`,
+      headerLabel: `${monthName.toUpperCase()} ${targetCalYear}`
     };
   }
 
@@ -410,18 +432,15 @@ function resolvePeriodRange(fyStr, periodType, monthStr, customDate, isTargetYea
   return {
     start,
     end,
-    display: `${moment(start).format('DD-MM-YYYY')} to ${moment(end).format('DD-MM-YYYY')}`
+    display: `${moment(start, 'YYYY-MM-DD').format('DD-MM-YYYY')} to ${moment(end, 'YYYY-MM-DD').format('DD-MM-YYYY')}`,
+    headerLabel: `FY ${startYear}-${String(endYear).slice(-2)}`
   };
 }
 
-// Calculate Tonnage from Cement Register & Revenue from Bill Register for a given date range and site filter
-async function calculatePeriodMetrics(dateRange, siteFilter, allCement, billRows) {
-  const cleanSite = (siteFilter || 'ALL').toUpperCase();
-
-  // 1. Tonnage from Cement Register
+// Calculate FULL PROJECT Tonnage from Cement Register & Revenue from Bill Register for a given date range (NO SITE FILTER)
+async function calculatePeriodMetrics(dateRange, allCement, billRows) {
+  // 1. Full Project Tonnage from Cement Register (No site filtering)
   let totalTonnage = 0;
-  let nvlTonnage = 0;
-  let nvclTonnage = 0;
   let tripCount = 0;
 
   for (const doc of allCement) {
@@ -429,26 +448,15 @@ async function calculatePeriodMetrics(dateRange, siteFilter, allCement, billRows
     const isoDate = parseToYYYYMMDD(rawDate);
     if (!isoDate || isoDate < dateRange.start || isoDate > dateRange.end) continue;
 
-    const rowSite = String(doc["SITE"] || '').toUpperCase().trim();
-    const isNVL = rowSite.includes('NVL') && !rowSite.includes('NVCL');
-    const isNVCL = rowSite.includes('NVCL');
-
-    if (cleanSite === 'NVL' && !isNVL) continue;
-    if (cleanSite === 'NVCL' && !isNVCL) continue;
-
-    const mt = parseFloat(String(doc["MT"] || doc.mt || doc["TONNAGE"] || 0).replace(/,/g, '')) || 0;
+    const mt = parseFloat(String(doc["MT"] || doc.mt || doc["TONNAGE"] || doc["TOTAL MT"] || 0).replace(/,/g, '')) || 0;
     if (mt > 0) {
       totalTonnage += mt;
-      if (isNVL) nvlTonnage += mt;
-      if (isNVCL) nvclTonnage += mt;
     }
     tripCount++;
   }
 
-  // 2. Revenue from Bill Register
+  // 2. Full Project Revenue from Bill Register (No site filtering)
   let totalRevenue = 0;
-  let nvlRevenue = 0;
-  let nvclRevenue = 0;
   let billCount = 0;
 
   for (const b of billRows) {
@@ -456,67 +464,50 @@ async function calculatePeriodMetrics(dateRange, siteFilter, allCement, billRows
     const isoDate = parseToYYYYMMDD(rawDate);
     if (!isoDate || isoDate < dateRange.start || isoDate > dateRange.end) continue;
 
-    const rowSite = String(b.site || b["SITE"] || '').toUpperCase().trim();
-    const isNVL = rowSite.includes('NVL') && !rowSite.includes('NVCL');
-    const isNVCL = rowSite.includes('NVCL');
-
-    if (cleanSite === 'NVL' && !isNVL) continue;
-    if (cleanSite === 'NVCL' && !isNVCL) continue;
-
     const amt = parseFloat(String(b.billAmount || b.amount || b["BILL AMOUNT"] || b["Billing Amount"] || 0).replace(/,/g, '')) || 0;
     if (amt > 0) {
       totalRevenue += amt;
-      if (isNVL) nvlRevenue += amt;
-      if (isNVCL) nvclRevenue += amt;
     }
     billCount++;
   }
 
   // Rounding
   totalTonnage = Math.round(totalTonnage * 100) / 100;
-  nvlTonnage = Math.round(nvlTonnage * 100) / 100;
-  nvclTonnage = Math.round(nvclTonnage * 100) / 100;
-
   totalRevenue = Math.round(totalRevenue * 100) / 100;
-  nvlRevenue = Math.round(nvlRevenue * 100) / 100;
-  nvclRevenue = Math.round(nvclRevenue * 100) / 100;
 
   const revPerMt = totalTonnage > 0 ? Math.round((totalRevenue / totalTonnage) * 100) / 100 : 0;
-  const nvlRevPerMt = nvlTonnage > 0 ? Math.round((nvlRevenue / nvlTonnage) * 100) / 100 : 0;
-  const nvclRevPerMt = nvclTonnage > 0 ? Math.round((nvclRevenue / nvclTonnage) * 100) / 100 : 0;
 
   return {
     tonnage: totalTonnage,
-    nvlTonnage,
-    nvclTonnage,
     tripCount,
     revenue: totalRevenue,
-    nvlRevenue,
-    nvclRevenue,
     billCount,
     revPerMt,
-    nvlRevPerMt,
-    nvclRevPerMt,
     dateRange
   };
 }
 
 // ── GET /pie-chart/growth-analysis ──────────────────────────────────────────
 // Volume (Tonnage) Growth vs Revenue Growth comparative analytics engine
+// Full project scope (No site filter) + Independent Month / Date Selectors
 router.get("/growth-analysis", async (req, res) => {
   try {
     const {
       tyFY = 'FY 2026-27',
       pyFY = 'FY 2025-26',
       periodType = 'FULL_FY', // 'FULL_FY' | 'MONTH' | 'DATE'
-      month = 'September',
+      tyMonth = 'September',
+      pyMonth = 'August',
+      month, // backwards compat fallback
       tyDate,
-      pyDate,
-      site = 'ALL'
+      pyDate
     } = req.query;
 
-    const tyRange = resolvePeriodRange(tyFY, periodType, month, tyDate, true);
-    const pyRange = resolvePeriodRange(pyFY, periodType, month, pyDate, false);
+    const targetMonth = tyMonth || month || 'September';
+    const comparisonMonth = pyMonth || month || 'August';
+
+    const tyRange = resolvePeriodRange(tyFY, periodType, targetMonth, tyDate, true);
+    const pyRange = resolvePeriodRange(pyFY, periodType, comparisonMonth, pyDate, false);
 
     const cementCol = getCementCol();
     const [allCement, { rows: allBillRows = [] }] = await Promise.all([
@@ -524,8 +515,8 @@ router.get("/growth-analysis", async (req, res) => {
       getBillRegisterData({ fy: 'ALL' })
     ]);
 
-    const tyMetrics = await calculatePeriodMetrics(tyRange, site, allCement, allBillRows);
-    const pyMetrics = await calculatePeriodMetrics(pyRange, site, allCement, allBillRows);
+    const tyMetrics = await calculatePeriodMetrics(tyRange, allCement, allBillRows);
+    const pyMetrics = await calculatePeriodMetrics(pyRange, allCement, allBillRows);
 
     // Calculate growth percentages (null if baseline is 0)
     const volumeGrowthPct = pyMetrics.tonnage > 0
@@ -544,32 +535,19 @@ router.get("/growth-analysis", async (req, res) => {
       ? Math.round((revenueGrowthPct - volumeGrowthPct) * 100) / 100
       : null;
 
-    // Reason for disproportion analysis (100% Data-Driven)
+    // Comparative Heading Construction: e.g. "SEPTEMBER 2026 VS AUGUST 2025" or "FY 2026-27 VS FY 2025-26"
+    const comparisonHeading = `${tyRange.headerLabel} VS ${pyRange.headerLabel}`;
+
+    // Reason for Disproportion analysis (100% Data-Driven based on Revenue / MT realization)
     let disproportionReasons = [];
     if (volumeGrowthPct !== null && revenueGrowthPct !== null) {
       const diffRevPerMt = Math.round((tyMetrics.revPerMt - pyMetrics.revPerMt) * 100) / 100;
-      if (Math.abs(growthGap) >= 0.01) {
+      if (Math.abs(growthGap || 0) >= 0.01) {
         if (diffRevPerMt !== 0) {
           disproportionReasons.push({
             factor: "Revenue Realization per MT",
             type: diffRevPerMt > 0 ? "POSITIVE_IMPACT" : "NEGATIVE_IMPACT",
-            detail: `Average realization changed by ${diffRevPerMt > 0 ? '+' : ''}₹${diffRevPerMt.toLocaleString('en-IN')}/MT (from ₹${pyMetrics.revPerMt.toLocaleString('en-IN')}/MT in ${pyFY} to ₹${tyMetrics.revPerMt.toLocaleString('en-IN')}/MT in ${tyFY}, ${revPerMtGrowthPct > 0 ? '+' : ''}${revPerMtGrowthPct}%). This ${diffRevPerMt > 0 ? 'accelerates' : 'reduces'} financial revenue relative to physical tonnage growth.`
-          });
-        }
-
-        // Site Mix shift analysis
-        const pyTotalTonnage = pyMetrics.tonnage || 1;
-        const tyTotalTonnage = tyMetrics.tonnage || 1;
-        const pyNvlShare = Math.round((pyMetrics.nvlTonnage / pyTotalTonnage) * 100);
-        const tyNvlShare = Math.round((tyMetrics.nvlTonnage / tyTotalTonnage) * 100);
-        const pyNvclShare = Math.round((pyMetrics.nvclTonnage / pyTotalTonnage) * 100);
-        const tyNvclShare = Math.round((tyMetrics.nvclTonnage / tyTotalTonnage) * 100);
-
-        if (Math.abs(tyNvlShare - pyNvlShare) >= 2 || Math.abs(tyNvclShare - pyNvclShare) >= 2) {
-          disproportionReasons.push({
-            factor: "Site Mix Contribution Shift",
-            type: "MIX_SHIFT",
-            detail: `Lifting distribution between sites shifted: NVL changed from ${pyNvlShare}% to ${tyNvlShare}% of total tonnage; NVCL changed from ${pyNvclShare}% to ${tyNvclShare}%. Differing site freight and realization structures directly impact total revenue yield.`
+            detail: `Average realization changed by ${diffRevPerMt > 0 ? '+' : ''}₹${diffRevPerMt.toLocaleString('en-IN')}/MT (from ₹${pyMetrics.revPerMt.toLocaleString('en-IN')}/MT in ${pyRange.headerLabel} to ₹${tyMetrics.revPerMt.toLocaleString('en-IN')}/MT in ${tyRange.headerLabel}, ${revPerMtGrowthPct > 0 ? '+' : ''}${revPerMtGrowthPct}%). This ${diffRevPerMt > 0 ? 'accelerates' : 'reduces'} financial revenue relative to physical tonnage growth.`
           });
         }
       } else {
@@ -593,19 +571,22 @@ router.get("/growth-analysis", async (req, res) => {
         tyFY,
         pyFY,
         periodType,
-        month,
+        tyMonth: targetMonth,
+        pyMonth: comparisonMonth,
         tyDate: tyRange.start,
-        pyDate: pyRange.start,
-        site
+        pyDate: pyRange.start
       },
+      comparisonHeading,
       ty: {
         financialYear: tyFY,
         periodDisplay: tyRange.display,
+        headerLabel: tyRange.headerLabel,
         ...tyMetrics
       },
       py: {
         financialYear: pyFY,
         periodDisplay: pyRange.display,
+        headerLabel: pyRange.headerLabel,
         ...pyMetrics
       },
       comparison: {
@@ -613,6 +594,7 @@ router.get("/growth-analysis", async (req, res) => {
         revenueGrowthPct,
         revPerMtGrowthPct,
         growthGap,
+        diffRevPerMt: Math.round((tyMetrics.revPerMt - pyMetrics.revPerMt) * 100) / 100,
         disproportionReasons
       }
     });
