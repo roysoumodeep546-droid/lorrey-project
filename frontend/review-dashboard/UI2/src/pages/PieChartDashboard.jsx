@@ -20,6 +20,7 @@ import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import PercentIcon from '@mui/icons-material/Percent';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import DynamicPieChart from '../components/DynamicPieChart';
+import VolumeVsRevenueGrowthTab from '../components/VolumeVsRevenueGrowthTab';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { exportToCsv } from '../utils/exportCsv';
@@ -383,18 +384,9 @@ const PieChartDashboard = ({ onBack }) => {
         </Tabs>
       </Box>
 
-      {/* TAB 1 — Volume(Tonnage) Growth VS Revenue Growth (EMPTY / NULL STATE) */}
+      {/* TAB 1 — Volume(Tonnage) Growth VS Revenue Growth */}
       {activeSubTab === 'volumeTonnage' && (
-        <Box sx={{
-          p: 8,
-          minHeight: '65vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRadius: '12px',
-          border: '1px dashed rgba(255, 255, 255, 0.1)',
-          bgcolor: 'rgba(20, 24, 28, 0.3)',
-        }} />
+        <VolumeVsRevenueGrowthTab />
       )}
 
       {/* TAB 2 — PTPK Analysis (EMPTY / NULL STATE) */}

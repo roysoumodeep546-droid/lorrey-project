@@ -3,6 +3,7 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const moment = require("moment");
 const AccountDetail = require("../models/AccountDetail");
+const { getBillRegisterData } = require("../utils/billRegisterHelper");
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June", 
@@ -359,6 +360,267 @@ async function fetchChartData(ledgerName, dateRange, period) {
     records
   };
 }
+
+// Helper function to resolve exact comparison period date bounds
+function resolvePeriodRange(fyStr, periodType, monthStr, customDate, isTargetYear = false) {
+  const { startYear, endYear } = parseFY(fyStr);
+  const now = moment();
+  const todayStr = now.format('YYYY-MM-DD');
+  const currentCalYear = now.year();
+  const currentMonthIdx = now.month(); // 0-11
+
+  if (periodType === 'DATE') {
+    const raw = customDate ? parseToYYYYMMDD(customDate) : todayStr;
+    const resolved = (isTargetYear && raw > todayStr) ? todayStr : (raw || todayStr);
+    return { start: resolved, end: resolved, display: moment(resolved).format('DD-MM-YYYY') };
+  }
+
+  if (periodType === 'MONTH') {
+    const mIdx = MONTHS.indexOf(monthStr);
+    const targetMonthIdx = mIdx >= 0 ? mIdx : currentMonthIdx;
+    const targetCalYear = targetMonthIdx >= 3 ? startYear : endYear;
+    const mPadded = String(targetMonthIdx + 1).padStart(2, '0');
+    const start = `${targetCalYear}-${mPadded}-01`;
+    const lastDay = moment(start).endOf('month').format('YYYY-MM-DD');
+    let end = lastDay;
+
+    // If TY and current calendar month/year, cap at today so future dates are not included
+    if (isTargetYear && targetCalYear === currentCalYear && targetMonthIdx === currentMonthIdx) {
+      if (todayStr < lastDay) end = todayStr;
+    }
+
+    return {
+      start,
+      end,
+      display: `${moment(start).format('DD-MM-YYYY')} to ${moment(end).format('DD-MM-YYYY')}`
+    };
+  }
+
+  // FULL_FY
+  const start = `${startYear}-04-01`;
+  const fyEnd = `${endYear}-03-31`;
+  let end = fyEnd;
+  // If target year is current or future FY, cap at today
+  if (isTargetYear) {
+    if (todayStr < fyEnd) {
+      end = todayStr;
+    }
+  }
+
+  return {
+    start,
+    end,
+    display: `${moment(start).format('DD-MM-YYYY')} to ${moment(end).format('DD-MM-YYYY')}`
+  };
+}
+
+// Calculate Tonnage from Cement Register & Revenue from Bill Register for a given date range and site filter
+async function calculatePeriodMetrics(dateRange, siteFilter, allCement, billRows) {
+  const cleanSite = (siteFilter || 'ALL').toUpperCase();
+
+  // 1. Tonnage from Cement Register
+  let totalTonnage = 0;
+  let nvlTonnage = 0;
+  let nvclTonnage = 0;
+  let tripCount = 0;
+
+  for (const doc of allCement) {
+    const rawDate = doc["LOADING DT"] || doc["LOADING DATE"] || doc["BILL DATE"] || doc["RECEIVING DATE"] || doc["DATE"];
+    const isoDate = parseToYYYYMMDD(rawDate);
+    if (!isoDate || isoDate < dateRange.start || isoDate > dateRange.end) continue;
+
+    const rowSite = String(doc["SITE"] || '').toUpperCase().trim();
+    const isNVL = rowSite.includes('NVL') && !rowSite.includes('NVCL');
+    const isNVCL = rowSite.includes('NVCL');
+
+    if (cleanSite === 'NVL' && !isNVL) continue;
+    if (cleanSite === 'NVCL' && !isNVCL) continue;
+
+    const mt = parseFloat(String(doc["MT"] || doc.mt || doc["TONNAGE"] || 0).replace(/,/g, '')) || 0;
+    if (mt > 0) {
+      totalTonnage += mt;
+      if (isNVL) nvlTonnage += mt;
+      if (isNVCL) nvclTonnage += mt;
+    }
+    tripCount++;
+  }
+
+  // 2. Revenue from Bill Register
+  let totalRevenue = 0;
+  let nvlRevenue = 0;
+  let nvclRevenue = 0;
+  let billCount = 0;
+
+  for (const b of billRows) {
+    const rawDate = b.invoiceDate || b["INVOICE DATE"] || b["BILL DATE"] || b.date;
+    const isoDate = parseToYYYYMMDD(rawDate);
+    if (!isoDate || isoDate < dateRange.start || isoDate > dateRange.end) continue;
+
+    const rowSite = String(b.site || b["SITE"] || '').toUpperCase().trim();
+    const isNVL = rowSite.includes('NVL') && !rowSite.includes('NVCL');
+    const isNVCL = rowSite.includes('NVCL');
+
+    if (cleanSite === 'NVL' && !isNVL) continue;
+    if (cleanSite === 'NVCL' && !isNVCL) continue;
+
+    const amt = parseFloat(String(b.billAmount || b.amount || b["BILL AMOUNT"] || b["Billing Amount"] || 0).replace(/,/g, '')) || 0;
+    if (amt > 0) {
+      totalRevenue += amt;
+      if (isNVL) nvlRevenue += amt;
+      if (isNVCL) nvclRevenue += amt;
+    }
+    billCount++;
+  }
+
+  // Rounding
+  totalTonnage = Math.round(totalTonnage * 100) / 100;
+  nvlTonnage = Math.round(nvlTonnage * 100) / 100;
+  nvclTonnage = Math.round(nvclTonnage * 100) / 100;
+
+  totalRevenue = Math.round(totalRevenue * 100) / 100;
+  nvlRevenue = Math.round(nvlRevenue * 100) / 100;
+  nvclRevenue = Math.round(nvclRevenue * 100) / 100;
+
+  const revPerMt = totalTonnage > 0 ? Math.round((totalRevenue / totalTonnage) * 100) / 100 : 0;
+  const nvlRevPerMt = nvlTonnage > 0 ? Math.round((nvlRevenue / nvlTonnage) * 100) / 100 : 0;
+  const nvclRevPerMt = nvclTonnage > 0 ? Math.round((nvclRevenue / nvclTonnage) * 100) / 100 : 0;
+
+  return {
+    tonnage: totalTonnage,
+    nvlTonnage,
+    nvclTonnage,
+    tripCount,
+    revenue: totalRevenue,
+    nvlRevenue,
+    nvclRevenue,
+    billCount,
+    revPerMt,
+    nvlRevPerMt,
+    nvclRevPerMt,
+    dateRange
+  };
+}
+
+// ── GET /pie-chart/growth-analysis ──────────────────────────────────────────
+// Volume (Tonnage) Growth vs Revenue Growth comparative analytics engine
+router.get("/growth-analysis", async (req, res) => {
+  try {
+    const {
+      tyFY = 'FY 2026-27',
+      pyFY = 'FY 2025-26',
+      periodType = 'FULL_FY', // 'FULL_FY' | 'MONTH' | 'DATE'
+      month = 'September',
+      tyDate,
+      pyDate,
+      site = 'ALL'
+    } = req.query;
+
+    const tyRange = resolvePeriodRange(tyFY, periodType, month, tyDate, true);
+    const pyRange = resolvePeriodRange(pyFY, periodType, month, pyDate, false);
+
+    const cementCol = getCementCol();
+    const [allCement, { rows: allBillRows = [] }] = await Promise.all([
+      cementCol.find({}).toArray(),
+      getBillRegisterData({ fy: 'ALL' })
+    ]);
+
+    const tyMetrics = await calculatePeriodMetrics(tyRange, site, allCement, allBillRows);
+    const pyMetrics = await calculatePeriodMetrics(pyRange, site, allCement, allBillRows);
+
+    // Calculate growth percentages (null if baseline is 0)
+    const volumeGrowthPct = pyMetrics.tonnage > 0
+      ? Math.round(((tyMetrics.tonnage - pyMetrics.tonnage) / pyMetrics.tonnage) * 10000) / 100
+      : null;
+
+    const revenueGrowthPct = pyMetrics.revenue > 0
+      ? Math.round(((tyMetrics.revenue - pyMetrics.revenue) / pyMetrics.revenue) * 10000) / 100
+      : null;
+
+    const revPerMtGrowthPct = pyMetrics.revPerMt > 0
+      ? Math.round(((tyMetrics.revPerMt - pyMetrics.revPerMt) / pyMetrics.revPerMt) * 10000) / 100
+      : null;
+
+    const growthGap = (revenueGrowthPct !== null && volumeGrowthPct !== null)
+      ? Math.round((revenueGrowthPct - volumeGrowthPct) * 100) / 100
+      : null;
+
+    // Reason for disproportion analysis (100% Data-Driven)
+    let disproportionReasons = [];
+    if (volumeGrowthPct !== null && revenueGrowthPct !== null) {
+      const diffRevPerMt = Math.round((tyMetrics.revPerMt - pyMetrics.revPerMt) * 100) / 100;
+      if (Math.abs(growthGap) >= 0.01) {
+        if (diffRevPerMt !== 0) {
+          disproportionReasons.push({
+            factor: "Revenue Realization per MT",
+            type: diffRevPerMt > 0 ? "POSITIVE_IMPACT" : "NEGATIVE_IMPACT",
+            detail: `Average realization changed by ${diffRevPerMt > 0 ? '+' : ''}₹${diffRevPerMt.toLocaleString('en-IN')}/MT (from ₹${pyMetrics.revPerMt.toLocaleString('en-IN')}/MT in ${pyFY} to ₹${tyMetrics.revPerMt.toLocaleString('en-IN')}/MT in ${tyFY}, ${revPerMtGrowthPct > 0 ? '+' : ''}${revPerMtGrowthPct}%). This ${diffRevPerMt > 0 ? 'accelerates' : 'reduces'} financial revenue relative to physical tonnage growth.`
+          });
+        }
+
+        // Site Mix shift analysis
+        const pyTotalTonnage = pyMetrics.tonnage || 1;
+        const tyTotalTonnage = tyMetrics.tonnage || 1;
+        const pyNvlShare = Math.round((pyMetrics.nvlTonnage / pyTotalTonnage) * 100);
+        const tyNvlShare = Math.round((tyMetrics.nvlTonnage / tyTotalTonnage) * 100);
+        const pyNvclShare = Math.round((pyMetrics.nvclTonnage / pyTotalTonnage) * 100);
+        const tyNvclShare = Math.round((tyMetrics.nvclTonnage / tyTotalTonnage) * 100);
+
+        if (Math.abs(tyNvlShare - pyNvlShare) >= 2 || Math.abs(tyNvclShare - pyNvclShare) >= 2) {
+          disproportionReasons.push({
+            factor: "Site Mix Contribution Shift",
+            type: "MIX_SHIFT",
+            detail: `Lifting distribution between sites shifted: NVL changed from ${pyNvlShare}% to ${tyNvlShare}% of total tonnage; NVCL changed from ${pyNvclShare}% to ${tyNvclShare}%. Differing site freight and realization structures directly impact total revenue yield.`
+          });
+        }
+      } else {
+        disproportionReasons.push({
+          factor: "Proportionate Growth",
+          type: "PROPORTIONATE",
+          detail: `Volume growth (${volumeGrowthPct}%) and Revenue growth (${revenueGrowthPct}%) are proportionate with stable average realization per MT.`
+        });
+      }
+    } else {
+      disproportionReasons.push({
+        factor: "Insufficient Historical Baseline",
+        type: "INSUFFICIENT_DATA",
+        detail: "Insufficient source data in the comparison baseline period to determine a specific mathematical contributing factor."
+      });
+    }
+
+    res.json({
+      success: true,
+      filters: {
+        tyFY,
+        pyFY,
+        periodType,
+        month,
+        tyDate: tyRange.start,
+        pyDate: pyRange.start,
+        site
+      },
+      ty: {
+        financialYear: tyFY,
+        periodDisplay: tyRange.display,
+        ...tyMetrics
+      },
+      py: {
+        financialYear: pyFY,
+        periodDisplay: pyRange.display,
+        ...pyMetrics
+      },
+      comparison: {
+        volumeGrowthPct,
+        revenueGrowthPct,
+        revPerMtGrowthPct,
+        growthGap,
+        disproportionReasons
+      }
+    });
+  } catch (err) {
+    console.error("[GrowthAnalysis] Error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 router.get("/", async (req, res) => {
   try {
